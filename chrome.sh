@@ -71,7 +71,7 @@ run_gost_proxy(){
 	echo "=> 检测到代理配置，正在准备 Gost SOCKS5 中转..."
 
 	local GOST_BIN=/tmp/gost
-	local GOST_PORT="${PROXY_LOCAL_PORT:-25848}"
+	local GOST_PORT="${PROXY_LOCAL_PORT:-25575}"
 
 	# 下载 Gost（仅当还没下载时）
 	if [ ! -x "$GOST_BIN" ]; then
@@ -174,7 +174,7 @@ run_remote(){
 		echo "✅ Deployment complete! This script has been deployed $stats times. Enjoy yourself! 🎉"
 		# 显示代理提示（若已启用）
 		if [ -n "$PROXY_IP" ] && [ -n "$PROXY_PORT" ]; then
-			local GOST_PORT="${PROXY_LOCAL_PORT:-25848}"
+			local GOST_PORT="${PROXY_LOCAL_PORT:-25575}"
 			echo "🛡  SOCKS5 代理: 127.0.0.1:${GOST_PORT}（无需密码，FoxyProxy 直接填写）"
 		fi
 		clean_screen
@@ -200,7 +200,7 @@ case "$1" in
 		;;
 	*)
 		echo "用法: $0 {start|stop|restart|status}"
-		echo "代理变量 (可选): PROXY_IP  PROXY_PORT  PROXY_USER  PROXY_PASS  PROXY_LOCAL_PORT(默认25848)"
+		echo "代理变量 (可选): PROXY_IP  PROXY_PORT  PROXY_USER  PROXY_PASS  PROXY_LOCAL_PORT(默认25575)"
 		exit 1
 		;;
 esac
