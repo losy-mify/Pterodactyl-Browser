@@ -180,6 +180,37 @@ enable_autoconnect() {
   fi
 }
 
+# 写入 Chromium 默认缩放配置（67%），在 Chromium 启动前执行
+# ln(0.67) ≈ -0.4054651081081645，Chromium 用对数值存储缩放
+# 同时写入 --no-first-run 标记，防止首次启动向导覆盖 Preferences
+setup_chromium_zoom() {
+  local profile_dir="\${HOME}/.config/chromium/Default"
+  local prefs_file="\${profile_dir}/Preferences"
+  mkdir -p "\${profile_dir}"
+  # 仅在 Preferences 不存在、或不含 default_zoom_level 时写入
+  # 避免覆盖用户已有的其他配置
+  if [ ! -f "\${prefs_file}" ]; then
+    cat > "\${prefs_file}" << 'PREFS'
+{
+  "partition": {
+    "default_zoom_level": {
+      "x": -0.4054651081081645
+    }
+  }
+}
+PREFS
+    echo "✅ Chromium 默认缩放已设为 67%"
+  elif ! grep -q "default_zoom_level" "\${prefs_file}" 2>/dev/null; then
+    # Preferences 已存在但没有缩放配置，用 sed 注入到第一个 { 后面
+    sed -i 's/{/{\"partition\":{\"default_zoom_level\":{\"x\":-0.4054651081081645}},/' "\${prefs_file}" 2>/dev/null || true
+    echo "✅ Chromium 默认缩放已注入到现有 Preferences"
+  else
+    echo "✅ Chromium 缩放配置已存在，跳过写入"
+  fi
+  # 写入 First Run 标记文件，阻止 Chromium 首次启动向导覆盖 Preferences
+  touch "\${HOME}/.config/chromium/First Run" 2>/dev/null || true
+}
+
 start_services() {
   echo "🚀 启动 Chromium + TigerVNC + Openbox..."
 
@@ -197,6 +228,9 @@ start_services() {
 
   [ -d ~/.config/openbox ] || mkdir -p ~/.config/openbox
   curl -LSs https://gbjs.serv00.net/tar/cm_menu.xml -o ~/.config/openbox/menu.xml 2>/dev/null || true
+
+  # 在 Chromium 启动前写入缩放配置，确保生效
+  setup_chromium_zoom
 
   # 启动 TigerVNC（降低分辨率和色深提升流畅度）
   export SERVICECMD="Xvnc :1 -geometry \${VNC_RESOLUTION} -depth \${VNC_DEPTH} -SecurityTypes None"
@@ -226,6 +260,7 @@ start_services() {
     --disable-gpu \
     --disable-software-rasterizer \
     --disable-background-networking \
+    --no-first-run \
     --js-flags=--max-old-space-size=512"
   (curl -LsSk https://gbjs.serv00.net/sh/runit.sh) | sh -s add
   mkdir -p "\$PWD/.cache"
