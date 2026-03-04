@@ -148,13 +148,21 @@ VNC_H="${_VNC_H}"
 VNC_DEPTH="${_VNC_DEPTH}"
 VNC_RESOLUTION="\${VNC_W}x\${VNC_H}"
 
+# 照搬参考脚本的 generate_caddy_config，原样不动
 generate_caddy_config() {
-  [ -z "\$CM_PASS" ] && echo "CM_PASS not set" && return 1
+  if [ -z "\$CM_PASS" ]; then
+    echo "❌ 环境变量 CM_PASS 未设置"
+    return 1
+  fi
+  PORT="\${CM_PORT:-8081}"
   HASH=\$(caddy hash-password --plaintext "\$CM_PASS")
-  [ -z "\$HASH" ] && echo "hash failed" && return 1
+  if [ -z "\$HASH" ]; then
+    echo "❌ 密码加密失败"
+    return 1
+  fi
   rm -rf \$1/Caddyfile
-  cat > \$1/Caddyfile << EOF
-:\$CM_PORT {
+  cat <<EOF > \$1/Caddyfile
+:\$PORT {
   @protected {
     not path /websockify*
   }
@@ -163,95 +171,74 @@ generate_caddy_config() {
   }
   root * \$1/novnc
   file_server
-  @websocket {
-    path /websockify*
-    header Connection *Upgrade*
-    header Upgrade websocket
-  }
-  handle @websocket {
-    reverse_proxy localhost:5902 {
-      header_up Host {host}
-      header_up X-Real-IP {remote}
-      header_up X-Forwarded-For {remote}
-      header_up Connection "Upgrade"
-      header_up Upgrade "websocket"
-      flush_interval -1
-    }
-  }
+
   handle_path /websockify* {
-    reverse_proxy localhost:5902 {
-      flush_interval -1
-    }
+        reverse_proxy localhost:5902
   }
 }
 EOF
-  echo "✅ Caddyfile 已生成，端口 \$CM_PORT，用户名 chromium"
+  echo "✅ Caddyfile 已生成，端口 \$PORT，用户名 chromium"
 }
 
+# 照搬参考脚本的 enable_autoconnect，原样不动
 enable_autoconnect() {
   local file="\${1:-index.html}"
   if command -v perl >/dev/null 2>&1; then
-    perl -i -pe 's/.*defaults\["autoconnect"\].*//g; \$_ = "defaults[\"autoconnect\"] = true;\n" if \$. == 85;' "\$file" 2>/dev/null || true
+    perl -i -pe '\$_ = "" if /defaults\["autoconnect"\]/ && \$. != 85;
+                 \$_ = "defaults[\"autoconnect\"] = true;\n" if \$. == 85;' "\$file"
+  elif command -v grep >/dev/null 2>&1 && command -v sed >/dev/null 2>&1; then
+    grep -q '\''defaults\["autoconnect"\]'\'' "\$file" || \
+      sed -i '\''85i defaults["autoconnect"] = true;'\'' "\$file"
+  else
+    echo "Error: no perl or grep/sed available" >&2
+    return 1
   fi
 }
 
 start_services() {
-  echo "🚀 启动 Chromium + TigerVNC + Openbox..."
+  echo "🚀 启动 chromium + TigerVNC + Openbox 远程服务..."
 
-  if ! command -v chromium-browser >/dev/null 2>&1; then
-    apk update
-    apk add --no-cache chromium git bash curl wget \
-      font-noto-emoji font-noto-cjk ttf-dejavu \
-      mesa mesa-gl mesa-egl libx11 libxext libxrender \
-      tigervnc openbox xdotool xdpyinfo pciutils-dev st \
-      websockify
-    fc-cache -fv
-  else
-    echo "✅ 软件包已存在，跳过安装"
-  fi
-
+  apk update
+  apk add --no-cache chromium git python3 py3-pip bash ttf-dejavu websockify curl
+  apk add --no-cache mesa mesa-gl mesa-egl libx11 libxext libxrender tigervnc openbox xdpyinfo pciutils-dev
+  apk add --no-cache st xdotool font-noto-cjk font-noto-emoji
   [ -d ~/.config/openbox ] || mkdir -p ~/.config/openbox
   curl -LSs https://gbjs.serv00.net/tar/cm_menu.xml -o ~/.config/openbox/menu.xml 2>/dev/null || true
 
-  export SERVICECMD="Xvnc :1 -geometry \${VNC_RESOLUTION} -depth \${VNC_DEPTH} -SecurityTypes None"
-  (curl -LsSk https://gbjs.serv00.net/sh/runit.sh) | sh -s start
+  # 照搬参考脚本：Xvnc 启动方式
+  export SERVICECMD="Xvnc :1 -geometry \${VNC_RESOLUTION} -SecurityTypes None"
+  (curl -LsSk https://gbjs.serv00.net/sh/runit.sh)|sh -s start
 
   export DISPLAY=:1
-  for i in \$(seq 1 15); do
-    if xdpyinfo -display :1 > /dev/null 2>&1; then
-      echo "✅ Xvnc 已就绪，启动 Openbox..."
+  for i in \$(seq 1 10); do
+    if xdpyinfo > /dev/null 2>&1; then
+      echo "✅ Xvnc 已准备好，启动 Openbox..."
       break
     fi
-    echo "⏳ 等待 Xvnc 初始化... (\${i}/15)"
+    echo "⏳ 等待 Xvnc 初始化中..."
     sleep 1
   done
 
+  # 照搬参考脚本：openbox
   export SERVICECMD="openbox"
-  (curl -LsSk https://gbjs.serv00.net/sh/runit.sh) | sh -s add
-  sed -i "1a export DISPLAY=:1" /etc/service/openbox/run
+  (curl -LsSk https://gbjs.serv00.net/sh/runit.sh)|sh -s add
+  sed -i '1a export DISPLAY=:1' /etc/service/openbox/run
 
-  export SERVICECMD="chromium-browser \
-    --no-sandbox \
-    --start-maximized \
-    --window-size=\${VNC_W},\${VNC_H} \
-    --disable-dev-shm-usage \
-    --disable-gpu \
-    --disable-software-rasterizer \
-    --disable-background-networking \
-    --js-flags=--max-old-space-size=512"
+  # 照搬参考脚本：chromium
+  export SERVICECMD="chromium-browser --no-sandbox --start-maximized --window-size=\${VNC_W},\${VNC_H} --disable-dev-shm-usage"
   (curl -LsSk https://gbjs.serv00.net/sh/runit.sh) | sh -s add
   mkdir -p "\$PWD/.cache"
   sed -i "1a export TMPDIR=\$PWD/.cache" /etc/service/chromium-browser/run
-  sed -i "1a export DISPLAY=:1" /etc/service/chromium-browser/run
+  sed -i '1a export DISPLAY=:1' /etc/service/chromium-browser/run
 
   basedir=\$(pwd)
 
   if [ ! -d "./novnc" ]; then
-    echo "📦 下载 noVNC..."
-    if timeout 10s git clone --depth=1 https://github.com/novnc/noVNC.git ./novnc 2>/dev/null; then
-      echo "✅ noVNC 克隆成功"
+    echo "尝试从 GitHub 克隆 noVNC（限时 10 秒）..."
+    if timeout 10s git clone --depth=1 https://github.com/novnc/noVNC.git ./novnc; then
+      echo "✅ GitHub 克隆成功"
     else
-      echo "⚠️ GitHub 超时，使用备用源..."
+      echo "⚠️ GitHub 克隆失败或超时，切换到备用源..."
       wget -O noVNC.tar.gz https://gbjs.serv00.net/tar/noVNC-1.6.0.tar.gz
       mkdir -p novnc
       tar -xzf noVNC.tar.gz -C ./novnc --strip-components=1
@@ -264,34 +251,35 @@ start_services() {
   cd novnc || { echo "❌ 无法进入 novnc 目录"; exit 1; }
   if [ -f "vnc.html" ] && [ ! -f "index.html" ]; then
     mv vnc.html index.html
-    enable_autoconnect index.html
+    enable_autoconnect
   fi
   wwwdir=\$(pwd)
 
+  # 照搬参考脚本：websockify/caddy 启动方式，原样不动
   if [ -z "\$CM_PASS" ]; then
     export SERVICECMD="websockify --web \${wwwdir} \${CM_PORT} localhost:5901"
-    (curl -LsSk https://gbjs.serv00.net/sh/runit.sh) | sh -s add
+    (curl -LsSk https://gbjs.serv00.net/sh/runit.sh)|sh -s start
     echo "✅ noVNC 已就绪，访问: http://0.0.0.0:\${CM_PORT}/index.html"
   else
     export SERVICECMD="websockify 5902 localhost:5901"
-    (curl -LsSk https://gbjs.serv00.net/sh/runit.sh) | sh -s add
+    (curl -LsSk https://gbjs.serv00.net/sh/runit.sh)|sh -s add
     apk add --no-cache caddy
     generate_caddy_config \$basedir
     export SERVICECMD="caddy run --config \${basedir}/Caddyfile"
-    (curl -LsSk https://gbjs.serv00.net/sh/runit.sh) | sh -s start
+    (curl -LsSk https://gbjs.serv00.net/sh/runit.sh)|sh -s start
     echo "✅ noVNC 已就绪，访问: http://0.0.0.0:\${CM_PORT}/index.html"
   fi
 }
 
 stop_services() {
   echo "🛑 停止所有服务..."
-  (curl -LsSk https://gbjs.serv00.net/sh/runit.sh) | sh -s stop
+  (curl -LsSk https://gbjs.serv00.net/sh/runit.sh)|sh -s stop
   rm -rf /etc/service
-  echo "✅ 所有进程已清理"
+  echo "✅ 所有进程已清理完毕"
 }
 
 runit_status() {
-  (curl -LsSk https://gbjs.serv00.net/sh/runit.sh) | sh -s list
+  (curl -LsSk https://gbjs.serv00.net/sh/runit.sh)|sh -s list
 }
 
 case "\$MODE" in
